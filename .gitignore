@@ -19,3 +19,4 @@ __pycache__/
 
 # VSCode
 .vscode/
+client_secret.json

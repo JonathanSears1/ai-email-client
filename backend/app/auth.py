@@ -1,6 +1,10 @@
 from fastapi import APIRouter, Request
 from requests_oauthlib import OAuth2Session
 import os
+import database
+import crud
+from auth_utils import create_access_token, get_current_user
+from fastapi import Depends
 
 router = APIRouter()
 
@@ -21,6 +25,13 @@ SCOPES = [
     "https://www.googleapis.com/auth/calendar.events.owned",
     "openid"
 ]
+
+def get_db():
+    db = database.SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 # Step 1: Generate login URL
 @router.get("/auth/login")
@@ -48,11 +59,21 @@ async def callback(request: Request):
     # Step 3: Get user profile info
     r = oauth.get('https://www.googleapis.com/oauth2/v1/userinfo')
     user_info = r.json()
+    
+    # Get database session
+    db = next(get_db())
+    try:
+        user = crud.create_or_update_user(
+            db=db,
+            email=user_info.get("email"),
+            name=user_info.get("name"),
+            token=token
+        )
+        access_token = create_access_token(data={"sub": user.email})
+        return {"access_token": access_token, "token_type": "bearer"}
+    finally:
+        db.close()
 
-    return {
-        "email": user_info.get("email"),
-        "access_token": token.get("access_token"),
-        "refresh_token": token.get("refresh_token"),
-        "expires_in": token.get("expires_in"),
-        "id_token": token.get("id_token")
-    }
+@router.get("/protected")
+async def protected_route(current_user: dict = Depends(get_current_user)):
+    return {"message": "This is a protected route", "user": current_user}

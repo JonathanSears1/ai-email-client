@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Request
+from fastapi.responses import RedirectResponse
 from requests_oauthlib import OAuth2Session
 import os
 import database
@@ -34,18 +35,19 @@ def get_db():
         db.close()
 
 # Step 1: Generate login URL
-@router.get("/auth/login")
+@router.get("/login")
 def login():
     oauth = OAuth2Session(CLIENT_ID, redirect_uri=REDIRECT_URI, scope=SCOPES)
     authorization_url, state = oauth.authorization_url(
         'https://accounts.google.com/o/oauth2/auth',
         access_type="offline",
+        include_granted_scopes="true",
         prompt="consent"
     )
     return {"auth_url": authorization_url}
 
 # Step 2: Handle callback
-@router.get("/auth/callback")
+@router.get("/callback")
 async def callback(request: Request):
     authorization_response = str(request.url)
 
@@ -70,7 +72,8 @@ async def callback(request: Request):
             token=token
         )
         access_token = create_access_token(data={"sub": user.email})
-        return {"access_token": access_token, "token_type": "bearer"}
+        redirect_url = f"http://localhost:3000/auth/callback?token={access_token}"
+        return RedirectResponse(redirect_url)
     finally:
         db.close()
 

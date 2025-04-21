@@ -72,6 +72,7 @@ async def callback(request: Request):
             token=token
         )
         access_token = create_access_token(data={"sub": user.email})
+        print(access_token)
         redirect_url = f"http://localhost:3000/auth/callback?token={access_token}"
         return RedirectResponse(redirect_url)
     finally:

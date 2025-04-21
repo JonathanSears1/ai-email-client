@@ -23,6 +23,7 @@ class User(Base):
     token_expiry = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc))
     updated_at = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc), onupdate=datetime.datetime.now)
+    last_summary_run = Column(DateTime, default=None)
 
 
 

@@ -4,6 +4,7 @@ from auth_utils import get_current_user
 from database import SessionLocal
 from crud import get_user_by_email
 from gmail_utils import get_gmail_service, create_message
+from agent import SummaryAgent
 import os
 import base64
 
@@ -34,7 +35,7 @@ async def read_inbox(current_user: dict = Depends(get_current_user), db: Session
     )
 
     # Step 3: List messages
-    results = service.users().messages().list(userId='me', maxResults=5).execute()
+    results = service.users().messages().list(userId='me', maxResults=25).execute()
     messages = results.get('messages', [])
 
     # Step 4: Fetch message details
@@ -179,3 +180,12 @@ async def save_draft(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@router.get("/summary")
+def generate_summary(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    user = get_user_by_email(db, current_user["sub"])
+    agent = SummaryAgent(user, db)
+    # Do scoring + summarization logic here...
+    summary = agent.summarize_emails()
+
+    return {"summary": summary}

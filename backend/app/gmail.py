@@ -34,27 +34,50 @@ async def read_inbox(current_user: dict = Depends(get_current_user), db: Session
         token_expiry=user.token_expiry
     )
 
-    # Step 3: List messages
-    results = service.users().messages().list(userId='me', maxResults=25).execute()
-    messages = results.get('messages', [])
+    # Step 3: List messages by category
+    categories = {
+        'primary': 'category:primary',
+        'social': 'category:social',
+        'promotions': 'category:promotions',
+        'updates': 'category:updates'
+    }
+    
+    categorized_messages = {}
+    
+    for category, query in categories.items():
+        try:
+            # List messages for each category
+            results = service.users().messages().list(
+                userId='me',
+                maxResults=25,
+                q=query
+            ).execute()
+            messages = results.get('messages', [])
 
-    # Step 4: Fetch message details
-    detailed_messages = []
-    for message in messages:
-        msg = service.users().messages().get(userId='me', id=message['id']).execute()
-        payload = msg.get('payload', {})
-        headers = payload.get('headers', [])
+            # Fetch message details for each category
+            detailed_messages = []
+            for message in messages:
+                msg = service.users().messages().get(userId='me', id=message['id']).execute()
+                payload = msg.get('payload', {})
+                headers = payload.get('headers', [])
 
-        subject = next((header['value'] for header in headers if header['name'] == 'Subject'), None)
-        sender = next((header['value'] for header in headers if header['name'] == 'From'), None)
+                subject = next((header['value'] for header in headers if header['name'] == 'Subject'), None)
+                sender = next((header['value'] for header in headers if header['name'] == 'From'), None)
+                date = next((header['value'] for header in headers if header['name'] == 'Date'), None)
 
-        detailed_messages.append({
-            'id': message['id'],
-            'subject': subject,
-            'from': sender
-        })
+                detailed_messages.append({
+                    'id': message['id'],
+                    'subject': subject,
+                    'from': sender,
+                    'date': date
+                })
 
-    return {"messages": detailed_messages}
+            categorized_messages[category] = detailed_messages
+        except Exception as e:
+            # If there's an error fetching a category, return an empty list for that category
+            categorized_messages[category] = []
+
+    return categorized_messages
 
 
 @router.post("/send")
@@ -189,3 +212,49 @@ def generate_summary(current_user: dict = Depends(get_current_user), db: Session
     summary = agent.summarize_emails()
 
     return {"summary": summary}
+
+@router.get("/messages/{message_id}")
+async def get_message_content(
+    message_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = get_user_by_email(db, current_user["sub"])
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    service = get_gmail_service(
+        access_token=user.access_token,
+        refresh_token=user.refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=os.getenv("GOOGLE_CLIENT_ID"),
+        client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+        token_expiry=user.token_expiry
+    )
+    try:
+        # Get the message
+        message = service.users().messages().get(
+            userId='me',
+            id=message_id,
+            format='full'
+        ).execute()
+        # Extract the message body
+        body = ""
+        if 'payload' in message:
+            parts = [message['payload']]
+            while parts:
+                part = parts.pop()
+                if 'parts' in part:
+                    parts.extend(part['parts'])
+                if 'body' in part and 'data' in part['body']:
+                    body_bytes = base64.urlsafe_b64decode(part['body']['data'])
+                    body += body_bytes.decode('utf-8')
+                elif 'body' in part and 'attachmentId' not in part['body']:
+                    body += part['body'].get('data', '')
+        return {
+            "message_id": message_id,
+            "body": body,
+            "snippet": message.get('snippet', '')
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

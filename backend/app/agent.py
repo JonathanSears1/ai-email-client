@@ -1,3 +1,4 @@
+import email.utils
 from langchain.tools import Tool
 import datetime
 from googleapiclient.discovery import build
@@ -13,6 +14,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain.chat_models import init_chat_model
 from langchain_core.documents import Document
 import base64
+import email
 
 if not os.environ.get("OPENAI_API_KEY"):
   os.environ["OPENAI_API_KEY"] = getpass.getpass("Enter API key for OpenAI: ")
@@ -103,19 +105,24 @@ class SummaryAgent:
             )
             documents.append(doc)
         
-        prompt = ChatPromptTemplate.from_messages(
-            [("system", '''
-              You are an AI email assistant. Summarize the following emails clearly and concisely.
-              \nOnly include:\n
-              - Important meeting invites\n
-              - Work/project updates\n
-              - Personal communication if relevant\n
-              Ignore:
-              - Promotions, newsletters, receipts, and spam
-              \n
-              \n
-              {context}
-              ''')])
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an AI assistant helping to summarize emails. Your goal is to provide clear, factual summaries of important messages while respecting privacy and confidentiality.
+
+        Please analyze the provided emails and create a concise summary that includes:
+        - Important meeting invitations and scheduling updates
+        - Work and project-related communications 
+        - Relevant personal messages
+
+        Exclude from the summary:
+        - Marketing and promotional content
+        - Newsletters and automated notifications
+        - Purchase receipts
+        - Spam or suspicious messages
+
+        Focus on extracting key information while maintaining a professional, neutral tone. Do not include sensitive details or private information.
+
+        {context}""")
+        ])
         
         # Instantiate chain
         chain = create_stuff_documents_chain(self.llm, prompt)
@@ -124,3 +131,76 @@ class SummaryAgent:
         # After summarizing, update the last summary run time
         self.update_last_summary_run()
         return result
+
+
+class DraftingAgent:
+    def __init__(self, user: User, db: Session, llm="gpt-4o-mini", provider="openai"):
+        self.user = user
+        self.db = db
+        self.service = get_gmail_service(
+            access_token=user.access_token,
+            refresh_token=user.refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=os.getenv("GOOGLE_CLIENT_ID"),
+            client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+            token_expiry=user.token_expiry
+        )
+        self.llm = init_chat_model(llm, model_provider=provider)
+    
+    def get_context(self, email_address: str, max_results: int = 20) -> list:
+        """
+        Get previous email exchanges with a specific email address.
+        
+        Args:
+            email_address: The email address to search for
+            max_results: Maximum number of emails to retrieve
+            
+        Returns:
+            List of email exchanges sorted by date
+        """
+        try:
+            # Search for emails to/from the specified address
+            query = f"from:{email_address} OR to:{email_address}"
+            results = self.service.users().messages().list(
+                userId='me',
+                q=query,
+                maxResults=max_results
+            ).execute()
+            messages = results.get('messages', [])
+            email_exchanges = []
+            for msg in messages:
+                # Get the full message details
+                message = self.service.users().messages().get(
+                    userId='me', 
+                    id=msg['id'],
+                    format='full'
+                ).execute()
+                # Extract headers
+                headers = message['payload']['headers']
+                subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), '')
+                from_email = next((h['value'] for h in headers if h['name'].lower() == 'from'), '')
+                date = next((h['value'] for h in headers if h['name'].lower() == 'date'), '')
+                
+                # Get message body
+                if 'parts' in message['payload']:
+                    body = message['payload']['parts'][0].get('body', {}).get('data', '')
+                else:
+                    body = message['payload'].get('body', {}).get('data', '')
+                if body:
+                    body = base64.urlsafe_b64decode(body).decode('utf-8')
+                email_exchanges.append({
+                    'subject': subject,
+                    'from': from_email,
+                    'to': email_address,
+                    'date': date,
+                    'body': body,
+                    'timestamp': email.utils.parsedate_to_datetime(date).timestamp()
+                })
+            # Sort by date, most recent first
+            email_exchanges.sort(key=lambda x: x['timestamp'], reverse=True)
+            
+            return email_exchanges
+        except Exception as e:
+            print(f"Error retrieving email context: {str(e)}")
+            return []
+        

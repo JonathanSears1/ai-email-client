@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 
 const SummaryButton = () => {
   const [loading, setLoading] = useState(false);
@@ -41,12 +42,14 @@ const SummaryButton = () => {
       </button>
 
       {summary && (
-        <div className="mt-4 p-4 border rounded-lg bg-gray-50">
-          <pre className="whitespace-pre-wrap">{summary}</pre>
+        <div className="mt-4 p-4 border-4 text-gray-600 rounded-lg border-blue-600 bg-gray-50">
+          <ReactMarkdown>
+            {summary}
+          </ReactMarkdown>
         </div>
       )}
     </>
   );
-};
+}; 
 
 export default SummaryButton;
